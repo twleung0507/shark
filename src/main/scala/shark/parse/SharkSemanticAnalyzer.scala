@@ -38,11 +38,12 @@ import org.apache.hadoop.hive.ql.parse._
 import org.apache.hadoop.hive.ql.plan._
 import org.apache.hadoop.hive.ql.session.SessionState
 
-import shark.{LogHelper, SharkConfVars, SharkOptimizer}
+import shark.{LogHelper, SharkConfVars}
 import shark.execution.{HiveDesc, Operator, OperatorFactory, ReduceSinkOperator}
 import shark.execution.{SharkDDLWork, SparkLoadWork, SparkWork, TerminalOperator}
 import shark.memstore2.{CacheType, LazySimpleSerDeWrapper, MemoryMetadataManager}
 import shark.memstore2.SharkTblProperties
+import shark.optimizer.SharkOptimizer
 
 
 /**
@@ -457,7 +458,7 @@ class SharkSemanticAnalyzer(conf: HiveConf) extends SemanticAnalyzer(conf) with 
       val createTableProperties: JavaMap[String, String] = createTableDesc.getTblProps()
 
       // There are two cases that will enable caching:
-      // 1) Table name includes "_cached" or "_tachyon".
+      // 1) Table name includes "_cached" or "_offheap".
       // 2) The "shark.cache" table property is "true", or the string representation of a supported
       //    cache mode (memory, memory-only, Tachyon).
       var cacheMode = CacheType.fromString(
@@ -467,14 +468,17 @@ class SharkSemanticAnalyzer(conf: HiveConf) extends SemanticAnalyzer(conf) with 
         if (tableName.endsWith("_cached") && cacheMode == CacheType.NONE) {
           cacheMode = CacheType.MEMORY_ONLY
         } else if (tableName.endsWith("_tachyon")) {
-          cacheMode = CacheType.TACHYON
+          logWarning("'*_tachyon' names are deprecated, please cache using '*_offheap'")
+          cacheMode = CacheType.OFFHEAP
+        } else if (tableName.endsWith("_offheap")) {
+          cacheMode = CacheType.OFFHEAP
         }
       }
 
       // Continue planning based on the 'cacheMode' read.
       val shouldCache = CacheType.shouldCache(cacheMode)
       if (shouldCache) {
-        if (cacheMode == CacheType.MEMORY_ONLY || cacheMode == CacheType.TACHYON) {
+        if (cacheMode == CacheType.MEMORY_ONLY || cacheMode == CacheType.OFFHEAP) {
           val serDeName = createTableDesc.getSerName
           if (serDeName == null || serDeName == classOf[LazySimpleSerDe].getName) {
             // Hive's SemanticAnalyzer optimizes based on checks for LazySimpleSerDe, which causes

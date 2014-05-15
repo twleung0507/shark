@@ -121,7 +121,6 @@ Required Options:
 
 Optional configuration environment variables:
   SHARK_PROJ_DIR (default: "$SHARK_PROJ_DIR_DEFAULT")
-  SCALA_HOME (default: Scala version ${SCALA_VERSION} will be downloaded and used)
   SBT_OPTS (default: "$SBT_OPTS_DEFAULT")
   SPARK_MEM (default: $SPARK_MEM_DEFAULT)
   SHARK_MASTER_MEM (default: $SHARK_MASTER_MEM_DEFAULT)
@@ -135,7 +134,6 @@ exit
 }
 
 # Initialize control flow vars.
-SKIP_SPARK=false
 SKIP_HIVE=false
 SKIP_HADOOP=false
 SKIP_TESTS=false
@@ -144,10 +142,6 @@ while getopts "hsedt" opt; do
   case $opt in
     h)
       usage
-      ;;
-    s)
-      echo SKIP SPARK
-      SKIP_SPARK=true
       ;;
     e)
       echo SKIP HIVE
@@ -201,15 +195,6 @@ export HIVE_HOME="$HIVE_DEV_HOME/build/dist"
 #   exit -1
 # fi
 
-if [ "x$SCALA_HOME" != "x" ] ; then
-  # User already specified SCALA_HOME. Make sure the correct version of Scala installed.
-  SCALA_HOME_VERSION=`${SCALA_HOME}/bin/scala -version|awk '{print $5}'`
-  if [ "$SCALA_HOME_VERSION" != "$SCALA_VERSION" ] ; then
-    echo "Your SCALA_HOME is version ${SCALA_HOME_VERSION}, but ${SCALA_VERSION} is required."
-    exit -1
-  fi
-fi
-
 # Kill this whole process group when Control-C is pressed. This ensures any child processes
 # aren't left running (this was happening before with Ant/Java processes).
 this_pgid=`ps -o pid -o pgid | grep $$ | awk '{print $2}'`
@@ -229,41 +214,8 @@ if [ -e "${SHARK_PROJ_DIR}/conf/shark-env.sh" ] ; then
 fi
 
 ####################################################################
-# Download Scala if SCALA_HOME is not specified.
+# Download Hadoop if necessary.
 ####################################################################
-if [ "x$SCALA_HOME" == "x" ] ; then
-  rm -rf ./scala*tgz
-  wget $SCALA_DOWNLOAD_PATH
-  tar xvfz scala*tgz
-  export SCALA_HOME="$WORKSPACE/scala-$SCALA_VERSION"
-fi
-echo "SCALA_HOME is $SCALA_HOME"
-
-####################################################################
-# Download and build Spark.
-####################################################################
-if $SKIP_SPARK ; then
-  if [ ! -e "spark" ] ; then
-    echo "spark dir must exist when skipping Spark download and build stage."
-    exit -1
-  fi
-else
-  # Clean up past Spark artifacts published locally.
-  rm -rf ./spark
-  rm -rf ~/.ivy2/local/org.apache.spark*
-  rm -rf ~/.ivy2/cache/org.apache.spark*
-  # Download and build Spark.
-  git clone $SPARK_GIT_URL
-  pushd spark
-  export SPARK_HADOOP_VERSION=$SPARK_HADOOP_VERSION
-  export SPARK_WITH_YARN=$SPARK_WITH_YARN
-  # Build spark and push the jars to local Ivy/Maven caches.
-  wget -nc http://typesafe.artifactoryonline.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/0.13.0/sbt-launch.jar
-  java $SBT_OPTS -jar sbt-launch.jar clean publish-local
-  popd
-fi
-export SPARK_HOME="$WORKSPACE/spark"
-
 if $SKIP_HADOOP ; then
   if [ ! -e "hadoop-${SPARK_HADOOP_VERSION}" ] ; then
     echo "hadoop-${SPARK_HADOOP_VERSION} must exist when skipping Hadoop download and build stage."

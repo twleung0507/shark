@@ -162,7 +162,9 @@ object SharkCliDriver {
     val cli = new SharkCliDriver(reloadRdds)
     cli.setHiveVariables(oproc.getHiveVariables())
 
-    SharkEnv.fixUncompatibleConf(conf)
+    if (!ss.isRemoteMode) {
+      SharkEnv.fixUncompatibleConf(conf)
+    }
 
     // Execute -i init files (always in silent mode)
     cli.processInitFiles(ss)
@@ -235,11 +237,19 @@ object SharkCliDriver {
         ret = cli.processLine(line, true)
         prefix = ""
         val sharkMode = SharkConfVars.getVar(conf, SharkConfVars.EXEC_MODE) == "shark"
-        curPrompt = if (sharkMode) SharkCliDriver.prompt else CliDriver.prompt
+        curPrompt = if (sharkMode) {
+          SharkCliDriver.prompt
+        } else {
+          conf.getVar(HiveConf.ConfVars.CLIPROMPT)
+        }
       } else {
         prefix = prefix + line
-        val sharkMode = SharkConfVars.getVar(conf, SharkConfVars.EXEC_MODE) == "shark"
-        curPrompt = if (sharkMode) SharkCliDriver.prompt2 else CliDriver.prompt2
+        val mode = SharkConfVars.getVar(conf, SharkConfVars.EXEC_MODE)
+        curPrompt = if (mode == "shark") {
+          SharkCliDriver.prompt2
+        } else {
+          spacesForStringMethod.invoke(null, mode).asInstanceOf[String]
+        }
         curPrompt += dbSpaces
       }
       line = reader.readLine(curPrompt + "> ")
