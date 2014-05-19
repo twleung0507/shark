@@ -53,6 +53,9 @@ class SharkDDLSemanticAnalyzer(conf: HiveConf) extends DDLSemanticAnalyzer(conf)
       case HiveParser.TOK_DROPTABLE => {
         analyzeDropTableOrDropParts(ast)
       }
+      case HiveParser.TOK_TRUNCATETABLE => {
+        analyzeTruncateTableOrParts(ast)
+      }
       case _ => Unit
     }
   }
@@ -165,6 +168,25 @@ class SharkDDLSemanticAnalyzer(conf: HiveConf) extends DDLSemanticAnalyzer(conf)
           sharkDDLWork.cacheMode = cacheMode
           ddlTask.addDependentTask(TaskFactory.get(sharkDDLWork, conf))
         }
+      }
+    }
+  }
+  
+  private def analyzeTruncateTableOrParts(ast: ASTNode) {
+    val databaseName = db.getCurrentDatabase()
+    //Table name is embedded deeper somehow
+    val tableName = getTableName(ast.getChild(0).asInstanceOf[ASTNode])
+    val hiveTable = db.getTable(databaseName, tableName)
+    val cacheMode = CacheType.fromString(hiveTable.getProperty(SharkTblProperties.CACHE_FLAG.varname))
+    // Create a SharkDDLTask only if the table is cached.
+    if (CacheType.shouldCache(cacheMode)) {
+      // Hive's DDLSemanticAnalyzer#analyzeInternal() will only populate rootTasks with DDLTasks
+      // and DDLWorks that contain TruncateTblDesc objects.
+      for (ddlTask <- rootTasks) {
+        val truncateTableDesc = ddlTask.getWork.asInstanceOf[DDLWork].getTruncateTblDesc
+        val sharkDDLWork = new SharkDDLWork(truncateTableDesc)
+        sharkDDLWork.cacheMode=cacheMode
+        ddlTask.addDependentTask(TaskFactory.get(sharkDDLWork, conf))
       }
     }
   }

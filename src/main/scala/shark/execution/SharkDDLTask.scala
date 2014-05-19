@@ -62,6 +62,7 @@ private[shark] class SharkDDLTask extends HiveTask[SharkDDLWork]
       case addPartitionDesc: AddPartitionDesc => addPartition(hiveDb, addPartitionDesc, work.cacheMode)
       case dropTableDesc: DropTableDesc => dropTableOrPartition(hiveDb, dropTableDesc, work.cacheMode)
       case alterTableDesc: AlterTableDesc => alterTable(hiveDb, alterTableDesc, work.cacheMode)
+      case truncateTableDesc: TruncateTableDesc => truncateTableOrPartition(hiveDb, truncateTableDesc, work.cacheMode)
       case _ => {
         throw new UnsupportedOperationException(
           "Shark does not require a Shark DDL task for: " + work.ddlDesc.getClass.getName)
@@ -178,6 +179,56 @@ private[shark] class SharkDDLTask extends HiveTask[SharkDDLWork]
           getPartitionedTableWithAssertions(dbName, tableName).removePartition(partKeyStr)
         }
       }
+    }
+  }
+  
+  /**
+   * Updates Shark metastore when truncating a table or partition
+   * 
+   * @param hiveMetadataDb Namespace of the table to truncate, or the table that a partition belongs to.
+   * @param truncateTblDesc Hive metadata object used for both truncating entire tables
+   *                      (i.e., TRUNCATE TABLE) and for truncating individual partitions of a table
+   *                      (i.e., TRUNCATE TABLE <table> PARTITION).
+   * @param cacheMode
+   */
+  def truncateTableOrPartition(
+      hiveMetadataDb: Hive,
+      truncateTblDesc: TruncateTableDesc,
+      cacheMode: CacheType.CacheType) {
+    val dbName = hiveMetadataDb.getCurrentDatabase
+    val tableName = truncateTblDesc.getTableName
+    val partSpec: JavaMap[String, String] = truncateTblDesc.getPartSpec
+    val tableKey = MemoryMetadataManager.makeTableKey(dbName, tableName)
+    
+    if(partSpec == null){
+	    if(cacheMode == CacheType.OFFHEAP) {
+	      if(OffHeapStorageClient.client.tableExists(tableKey)) {
+	        OffHeapStorageClient.client.dropTable(tableKey)
+	        OffHeapStorageClient.client.createTablePartition(tableKey, None)
+	      }
+	    }else{
+	      val tableOpt = SharkEnv.memoryMetadataManager.getTable(dbName, tableName)
+	        assert(tableOpt.exists(_.isInstanceOf[MemoryTable]),
+	          "Memory table being updated cannot be found in the Shark metastore.")
+	      tableOpt.flatMap(tableValue => MemoryMetadataManager.unpersistRDDsForTable(tableValue))
+	      val memoryTable = tableOpt.get.asInstanceOf[MemoryTable]
+	      memoryTable.put(new EmptyRDD(SharkEnv.sc))
+	    }
+    } else {
+    	val hiveTable = db.getTable(tableName, false)
+    	val partCols: Seq[String] = hiveTable.getPartCols.map(_.getName)
+    	val partKeyStr = MemoryMetadataManager.makeHivePartitionKeyStr(partCols, partSpec)
+    	if (cacheMode == CacheType.OFFHEAP) {
+    	  if(OffHeapStorageClient.client.tablePartitionExists(tableKey, Some(partKeyStr))){
+    	    OffHeapStorageClient.client.dropTablePartition(tableKey, Some(partKeyStr))
+    	    OffHeapStorageClient.client.createTablePartition(tableKey, Some(partKeyStr))
+    	  }
+    	}else{
+    	  val partitionedTable = getPartitionedTableWithAssertions(dbName, tableName)
+    	  //Remove all persisted RDD in memory...
+    	  partitionedTable.getPartition(partKeyStr).map(rdd => RDDUtils.unpersistRDD(rdd))
+    	  partitionedTable.putPartition(partKeyStr, new EmptyRDD(SharkEnv.sc))
+    	}
     }
   }
 
