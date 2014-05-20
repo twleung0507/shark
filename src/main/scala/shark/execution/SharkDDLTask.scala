@@ -208,11 +208,18 @@ private[shark] class SharkDDLTask extends HiveTask[SharkDDLWork]
 	      }
 	    }else{
 	      val tableOpt = SharkEnv.memoryMetadataManager.getTable(dbName, tableName)
-	        assert(tableOpt.exists(_.isInstanceOf[MemoryTable]),
-	          "Memory table being updated cannot be found in the Shark metastore.")
-	      tableOpt.flatMap(tableValue => MemoryMetadataManager.unpersistRDDsForTable(tableValue))
-	      val memoryTable = tableOpt.get.asInstanceOf[MemoryTable]
-	      memoryTable.put(new EmptyRDD(SharkEnv.sc))
+	      tableOpt.get match {
+	        case memoryTable: MemoryTable =>  
+	          tableOpt.flatMap(tableValue => MemoryMetadataManager.unpersistRDDsForTable(tableValue))
+	          memoryTable.put(new EmptyRDD(SharkEnv.sc))
+	        case partitionedTable: PartitionedMemoryTable =>
+	          partitionedTable.keyToPartitions.map{
+	            case (key, value) =>
+	              RDDUtils.unpersistRDD(value)
+	              partitionedTable.putPartition(key, new EmptyRDD(SharkEnv.sc))
+	          }
+	        case _ => assert(false, "Memory/PartitionedMemoryTable table being updated cannot be found in the Shark metastore.")
+	      }
 	    }
     } else {
     	val hiveTable = db.getTable(tableName, false)
